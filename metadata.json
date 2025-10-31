@@ -1,0 +1,5 @@
+{
+  "name": "tạo kich bản video veo3",
+  "description": "An application to help users write scripts and generate prompts for creating Veo 3.1 videos with consistent characters, including a reference image and multiple scenes.",
+  "requestFramePermissions": []
+}
