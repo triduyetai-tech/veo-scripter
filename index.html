@@ -1,0 +1,1089 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Veo 3 — Trình tạo kịch bản nhân vật nhất quán</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎬</text></svg>">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script type="importmap">
+    {
+      "imports": {
+        "@google/genai": "https://aistudiocdn.com/@google/genai@^1.28.0",
+        "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+        "react/": "https://aistudiocdn.com/react@^19.2.0/",
+        "react": "https://aistudiocdn.com/react@^19.2.0"
+      }
+    }
+    </script>
+    <style>html, body, #root { height: 100%; }</style>
+  </head>
+  <body class="bg-gray-900 text-white">
+    <div id="root"></div>
+    <script type="text/babel" data-type="module" data-presets="typescript,react">
+      import React from 'react';
+      import ReactDOM from 'react-dom/client';
+      
+// Client-side API key getter + aistudio shim
+window.__VEO3_STATIC__ = true;
+function getApiKey() {
+  const fromStorage = localStorage.getItem('GEMINI_API_KEY') || localStorage.getItem('API_KEY');
+  if (fromStorage) return fromStorage;
+  const entered = window.prompt('Nhập GEMINI API Key của bạn (sẽ được lưu vào LocalStorage):');
+  if (entered) {
+    localStorage.setItem('GEMINI_API_KEY', entered.trim());
+    return entered.trim();
+  }
+  throw new Error('Thiếu GEMINI API Key');
+}
+window.aistudio = window.aistudio || {
+  async hasSelectedApiKey() { return !!localStorage.getItem('GEMINI_API_KEY') || !!localStorage.getItem('API_KEY'); },
+  async openSelectKey() { getApiKey(); }
+};
+
+      
+// ---- types.ts ----
+
+export interface Scene {
+  id: number;
+  description: string;
+  generatedPrompt: string;
+  videoUrl: string | null;
+  thumbnailUrl: string | null;
+  isLoading: boolean;
+  error: string | null;
+}
+
+// ---- utils/fileUtils.ts ----
+
+export const fileToBase64 = (file: File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => {
+      const result = reader.result as string;
+      // remove the "data:mime/type;base64," prefix
+      const base64 = result.split(',')[1];
+      resolve(base64);
+    };
+    reader.onerror = (error) => reject(error);
+  });
+};
+
+export const base64ToFile = async (dataUrl: string, filename: string, mimeType?: string): Promise<File> => {
+    const res = await fetch(dataUrl);
+    const blob = await res.blob();
+    return new File([blob], filename, { type: mimeType || blob.type });
+};
+
+
+// ---- components/icons.tsx ----
+
+import React from 'react';
+
+export const PlusIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="24"
+    height="24"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+  >
+    <path d="M5 12h14" />
+    <path d="M12 5v14" />
+  </svg>
+);
+
+export const TrashIcon: React.FC<{ className?: string }> = ({ className }) => (
+    <svg 
+        xmlns="http://www.w3.org/2000/svg" 
+        width="24" 
+        height="24" 
+        viewBox="0 0 24 24" 
+        fill="none" 
+        stroke="currentColor" 
+        strokeWidth="2" 
+        strokeLinecap="round" 
+        strokeLinejoin="round" 
+        className={className}
+    >
+        <path d="M3 6h18" />
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+        <line x1="10" y1="11" x2="10" y2="17" />
+        <line x1="14" y1="11" x2="14" y2="17" />
+    </svg>
+);
+
+
+export const LoaderIcon: React.FC<{ className?: string }> = ({ className }) => (
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    width="24"
+    height="24"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="2"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={`animate-spin ${className}`}
+  >
+    <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+  </svg>
+);
+
+export const WandSparklesIcon: React.FC<{ className?: string }> = ({ className }) => (
+    <svg 
+        xmlns="http://www.w3.org/2000/svg" 
+        width="24" 
+        height="24" 
+        viewBox="0 0 24 24" 
+        fill="none" 
+        stroke="currentColor" 
+        strokeWidth="2" 
+        strokeLinecap="round" 
+        strokeLinejoin="round" 
+        className={className}
+    >
+        <path d="m22 12-3-3-3 3-3-3-3 3-3-3-3 3 3 3 3-3 3 3 3 3 3-3Z"/><path d="M6.5 2.5 8 5l-1.5 2.5L5 5Z"/><path d="m14 2-1.5 2.5 1.5 2.5 1.5-2.5Z"/>
+    </svg>
+);
+
+export const PlayIcon: React.FC<{ className?: string }> = ({ className }) => (
+    <svg 
+        xmlns="http://www.w3.org/2000/svg" 
+        width="24" 
+        height="24" 
+        viewBox="0 0 24 24" 
+        fill="none" 
+        stroke="currentColor" 
+        strokeWidth="2" 
+        strokeLinecap="round" 
+        strokeLinejoin="round" 
+        className={className}
+    >
+        <polygon points="5 3 19 12 5 21 5 3" />
+    </svg>
+);
+
+export const GripVerticalIcon: React.FC<{ className?: string }> = ({ className }) => (
+    <svg
+        xmlns="http://www.w3.org/2000/svg"
+        width="24"
+        height="24"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        className={className}
+    >
+        <circle cx="9" cy="12" r="1" />
+        <circle cx="9" cy="5" r="1" />
+        <circle cx="9" cy="19" r="1" />
+        <circle cx="15" cy="12" r="1" />
+        <circle cx="15" cy="5" r="1" />
+        <circle cx="15" cy="19" r="1" />
+    </svg>
+);
+
+
+// ---- translations.ts ----
+
+type Translation = {
+  [key: string]: string;
+};
+
+type Translations = {
+  en: Translation;
+  vi: Translation;
+};
+
+export const translations: Translations = {
+  en: {
+    // Header
+    title: 'Veo Character Scripter',
+    subtitle: 'Create consistent character video scripts with AI.',
+    // API Key Screen
+    welcome: 'Welcome!',
+    apiKeyPrompt: 'This application requires a Google AI Studio API key to generate videos. Please select your key to continue.',
+    billingInfo: 'For information about billing, please visit',
+    selectApiKey: 'Select API Key',
+    // Main App - Left Panel
+    defineCharacterTitle: '1. Define Your Character',
+    characterDescriptionPlaceholder: 'e.g., A cheerful young astronaut named Alex with a bright blue suit and a curious, adventurous personality.',
+    videoDurationTitle: 'Desired Video Duration (minutes)',
+    aspectRatioTitle: 'Aspect Ratio',
+    landscape: 'Landscape',
+    portrait: 'Portrait',
+    resolutionTitle: 'Video Resolution',
+    standardDef: 'Standard',
+    highDef: 'High',
+    veoModelTitle: 'Video Generation Mode',
+    fastMode: 'Fast',
+    highQualityMode: 'High Quality',
+    characterReferenceImageTitle: 'Character Reference Image',
+    uploadImage: 'Upload Image',
+    imageFormatInfo: 'PNG, JPG up to 10MB',
+    imagePreviewPlaceholder: 'Image preview will appear here',
+    generateImageButton: 'Generate with AI',
+    generatingImageButton: 'Generating...',
+    generateScriptTitle: '2. Generate Script from an Idea (Optional)',
+    storyIdeaPlaceholder: 'e.g., Alex the astronaut discovers a glowing plant that communicates with music.',
+    generateScriptButton: 'Generate Script',
+    generatingScriptButton: 'Generating...',
+    editScenesTitle: '3. Review & Edit Scenes',
+    addScene: 'Add Scene',
+    scenePlaceholder: 'Describe scene {index}...',
+    generatePromptsButton: 'Generate Prompts',
+    generatingPromptsButton: 'Generating Prompts...',
+    generateVideoButton: 'Generate Video',
+    generateAllVideosButton: 'Generate All Videos',
+    // Main App - Right Panel
+    storyboardTitle: '4. Generated Storyboard',
+    storyboardPlaceholder: 'Your generated prompts and videos will appear here.',
+    sceneTitle: 'Scene {index}',
+    generatedPromptTitle: 'Video Prompt:',
+    videoPromptPlaceholder: 'Manually enter a detailed prompt here, or generate one from the scenes on the left.',
+    videoPlaceholder: 'Video will appear here',
+    generatingVideo: 'Generating video...',
+    generatingVideoSubtext: 'This may take a few minutes.',
+    videoFailed: 'Video Generation Failed',
+    // Loading & Alerts
+    apiKeyRequiredError: 'An API key is required to proceed.',
+    apiKeyErrorHint: '(This may be due to an invalid API key.)',
+    genericError: 'An error occurred: {message}',
+    formValidationError: 'Please provide a character description, a reference image, and a description for every scene.',
+    storyIdeaRequiredError: 'Please enter a story idea to generate a script.',
+    characterDescriptionRequiredForImage: 'Please enter a character description to generate an image.',
+  },
+  vi: {
+    // Header
+    title: 'Tạo Kịch Bản Nhân Vật Veo',
+    subtitle: 'Tạo kịch bản video với nhân vật nhất quán bằng AI.',
+    // API Key Screen
+    welcome: 'Chào mừng!',
+    apiKeyPrompt: 'Ứng dụng này yêu cầu khóa API của Google AI Studio để tạo video. Vui lòng chọn khóa của bạn để tiếp tục.',
+    billingInfo: 'Để biết thông tin về thanh toán, vui lòng truy cập',
+    selectApiKey: 'Chọn Khóa API',
+    // Main App - Left Panel
+    defineCharacterTitle: '1. Xác định Nhân vật của bạn',
+    characterDescriptionPlaceholder: 'VD: Một phi hành gia trẻ vui vẻ tên Alex trong bộ đồ màu xanh dương sáng, có tính cách tò mò và thích phiêu lưu.',
+    videoDurationTitle: 'Thời lượng Video mong muốn (phút)',
+    aspectRatioTitle: 'Tỷ lệ khung hình',
+    landscape: 'Ngang',
+    portrait: 'Dọc',
+    resolutionTitle: 'Độ phân giải Video',
+    standardDef: 'Tiêu chuẩn',
+    highDef: 'Cao',
+    veoModelTitle: 'Chế độ Tạo Video',
+    fastMode: 'Nhanh',
+    highQualityMode: 'Chất lượng cao',
+    characterReferenceImageTitle: 'Hình ảnh tham chiếu nhân vật',
+    uploadImage: 'Tải Ảnh Lên',
+    imageFormatInfo: 'PNG, JPG tối đa 10MB',
+    imagePreviewPlaceholder: 'Bản xem trước hình ảnh sẽ xuất hiện ở đây',
+    generateImageButton: 'Tạo bằng AI',
+    generatingImageButton: 'Đang tạo...',
+    generateScriptTitle: '2. Tạo Kịch Bản từ Ý Tưởng (Tùy chọn)',
+    storyIdeaPlaceholder: 'VD: Phi hành gia Alex phát hiện một loài cây phát sáng có thể giao tiếp bằng âm nhạc.',
+    generateScriptButton: 'Tạo Kịch Bản',
+    generatingScriptButton: 'Đang tạo...',
+    editScenesTitle: '3. Xem lại & Chỉnh sửa Cảnh',
+    addScene: 'Thêm cảnh',
+    scenePlaceholder: 'Mô tả cảnh {index}...',
+    generatePromptsButton: 'Tạo Gợi Ý',
+    generatingPromptsButton: 'Đang tạo Gợi Ý...',
+    generateVideoButton: 'Tạo Video',
+    generateAllVideosButton: 'Tạo Tất Cả Video',
+    // Main App - Right Panel
+    storyboardTitle: '4. Kịch bản đã tạo',
+    storyboardPlaceholder: 'Các gợi ý và video đã tạo của bạn sẽ xuất hiện ở đây.',
+    sceneTitle: 'Cảnh {index}',
+    generatedPromptTitle: 'Gợi ý Video:',
+    videoPromptPlaceholder: 'Nhập gợi ý chi tiết vào đây theo cách thủ công hoặc tạo gợi ý từ các cảnh ở bên trái.',
+    videoPlaceholder: 'Video sẽ xuất hiện ở đây',
+    generatingVideo: 'Đang tạo video...',
+    generatingVideoSubtext: 'Quá trình này có thể mất vài phút.',
+    videoFailed: 'Tạo Video Thất bại',
+    // Loading & Alerts
+    apiKeyRequiredError: 'Vui lòng nhập khóa API để tiếp tục.',
+    apiKeyErrorHint: '(Lỗi này có thể do khóa API không hợp lệ.)',
+    genericError: 'Đã xảy ra lỗi: {message}',
+    formValidationError: 'Vui lòng cung cấp mô tả nhân vật, hình ảnh tham chiếu và mô tả cho mọi cảnh.',
+    storyIdeaRequiredError: 'Vui lòng nhập ý tưởng câu chuyện để tạo kịch bản.',
+    characterDescriptionRequiredForImage: 'Vui lòng nhập mô tả nhân vật để tạo ảnh.',
+  },
+};
+
+
+// ---- App.tsx ----
+
+import React, { useState, useEffect, useCallback } from 'react';
+import { GoogleGenAI, Type, Modality } from '@google/genai';
+import { Scene } from './types';
+import { fileToBase64, base64ToFile } from './utils/fileUtils';
+import { PlusIcon, TrashIcon, LoaderIcon, WandSparklesIcon, PlayIcon, GripVerticalIcon } from './components/icons';
+import { translations } from './translations';
+
+type AspectRatio = '16:9' | '9:16';
+type Resolution = '720p' | '1080p';
+type VeoModel = 'veo-3.1-fast-generate-preview' | 'veo-3.1-generate-preview';
+
+const App: React.FC = () => {
+    const [hasApiKey, setHasApiKey] = useState<boolean>(false);
+    const [characterDescription, setCharacterDescription] = useState<string>('');
+    const [characterImage, setCharacterImage] = useState<File | null>(null);
+    const [characterImageB64, setCharacterImageB64] = useState<string | null>(null);
+    const [storyIdea, setStoryIdea] = useState<string>('');
+    const [isGeneratingScript, setIsGeneratingScript] = useState(false);
+    const [isGeneratingPrompts, setIsGeneratingPrompts] = useState(false);
+    const [isGeneratingImage, setIsGeneratingImage] = useState(false);
+
+    const [scenes, setScenes] = useState<Scene[]>([
+        { id: 1, description: '', generatedPrompt: '', videoUrl: null, thumbnailUrl: null, isLoading: false, error: null },
+    ]);
+    const [language, setLanguage] = useState<'en' | 'vi'>('vi');
+    const [videoDuration, setVideoDuration] = useState<number>(1);
+    const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9');
+    const [resolution, setResolution] = useState<Resolution>('720p');
+    const [veoModel, setVeoModel] = useState<VeoModel>('veo-3.1-fast-generate-preview');
+    
+    const [draggedSceneId, setDraggedSceneId] = useState<number | null>(null);
+
+    const t = useCallback((key: string, params?: { [key: string]: string | number }) => {
+        let str = translations[language][key] || key;
+        if (params) {
+            Object.keys(params).forEach(pKey => {
+                str = str.replace(`{${pKey}}`, String(params[pKey]));
+            });
+        }
+        return str;
+    }, [language]);
+
+    useEffect(() => {
+        const checkApiKey = async () => {
+            if (window.aistudio) {
+                const hasKey = await window.aistudio.hasSelectedApiKey();
+                setHasApiKey(hasKey);
+            }
+        };
+        checkApiKey();
+    }, []);
+
+    const handleSelectApiKey = async () => {
+        if (window.aistudio) {
+            await window.aistudio.openSelectKey();
+            // Optimistically set to true to handle race condition
+            setHasApiKey(true);
+        }
+    };
+    
+    const handleAddScene = () => {
+        setScenes([
+            ...scenes,
+            { id: Date.now(), description: '', generatedPrompt: '', videoUrl: null, thumbnailUrl: null, isLoading: false, error: null },
+        ]);
+    };
+
+    const handleRemoveScene = (id: number) => {
+        setScenes(scenes.filter((scene) => scene.id !== id));
+    };
+
+    const handleSceneDescriptionChange = (id: number, description: string) => {
+        setScenes(
+            scenes.map((scene) => (scene.id === id ? { ...scene, description } : scene))
+        );
+    };
+    
+    const handleGeneratedPromptChange = (id: number, prompt: string) => {
+        setScenes(
+            scenes.map((scene) => (scene.id === id ? { ...scene, generatedPrompt: prompt } : scene))
+        );
+    };
+    
+    const handleImageChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (file) {
+            setCharacterImage(file);
+            try {
+                const base64 = await fileToBase64(file);
+                setCharacterImageB64(base64);
+            } catch (error) {
+                console.error("Error converting file to base64:", error);
+                setCharacterImageB64(null);
+            }
+        }
+    };
+
+    const handleGenerateCharacterImage = async () => {
+        if (!characterDescription.trim()) {
+            alert(t('characterDescriptionRequiredForImage'));
+            return;
+        }
+
+        setIsGeneratingImage(true);
+        setCharacterImageB64(null);
+        setCharacterImage(null);
+
+        try {
+            const ai = new GoogleGenAI({ apiKey: getApiKey() });
+            const prompt = `A full-body concept art of a character: ${characterDescription}. Clean, simple background, vibrant colors, detailed digital illustration style. The character should be clearly visible.`;
+            
+            const response = await ai.models.generateContent({
+                model: 'gemini-2.5-flash-image',
+                contents: {
+                    parts: [{ text: prompt }],
+                },
+                config: {
+                    responseModalities: [Modality.IMAGE],
+                },
+            });
+
+            for (const part of response.candidates[0].content.parts) {
+                if (part.inlineData) {
+                    const base64ImageBytes = part.inlineData.data;
+                    setCharacterImageB64(base64ImageBytes);
+
+                    const imageFile = await base64ToFile(
+                        `data:${part.inlineData.mimeType};base64,${base64ImageBytes}`, 
+                        'generated-character.png', 
+                        part.inlineData.mimeType
+                    );
+                    setCharacterImage(imageFile);
+                    break; 
+                }
+            }
+        } catch (error: any) {
+            console.error('An error occurred during character image generation:', error);
+            if (error.message?.includes('Requested entity was not found.')) {
+                setHasApiKey(false);
+            }
+            alert(t('genericError', { message: `${error.message} ${t('apiKeyErrorHint')}` }));
+        } finally {
+            setIsGeneratingImage(false);
+        }
+    };
+
+    const handleGenerateScriptFromIdea = async () => {
+        if (!storyIdea.trim()) {
+            alert(t('storyIdeaRequiredError'));
+            return;
+        }
+
+        setIsGeneratingScript(true);
+        try {
+            const ai = new GoogleGenAI({ apiKey: getApiKey() });
+            const prompt = `
+                You are a scriptwriter for short videos. Your task is to take a story idea and a target duration and break it down into a series of distinct scenes.
+
+                Story Idea: "${storyIdea}"
+                Target Video Duration: ${videoDuration} minutes.
+
+                Based on the duration, decide on an appropriate number of scenes (e.g., 2-4 scenes per minute). For each scene, write a concise one or two-sentence description of the action involving the main character.
+
+                The output must be a valid JSON array of strings, where each string is a scene description.
+            `;
+
+            const result = await ai.models.generateContent({
+                model: 'gemini-2.5-pro',
+                contents: prompt,
+                config: {
+                    responseMimeType: 'application/json',
+                    responseSchema: {
+                        type: Type.ARRAY,
+                        items: { type: Type.STRING },
+                    },
+                },
+            });
+            
+            const sceneDescriptions: string[] = JSON.parse(result.text.trim());
+            const newScenes: Scene[] = sceneDescriptions.map((desc, index) => ({
+                id: Date.now() + index,
+                description: desc,
+                generatedPrompt: desc, // Automatically populate prompt from description
+                videoUrl: null,
+                thumbnailUrl: null,
+                isLoading: false,
+                error: null,
+            }));
+            
+            if (newScenes.length > 0) {
+              setScenes(newScenes);
+            } else {
+              throw new Error("AI did not generate any scenes.");
+            }
+
+        } catch (error: any) {
+            console.error('An error occurred during script generation:', error);
+            if (error.message?.includes('Requested entity was not found.')) {
+                setHasApiKey(false);
+            }
+            alert(t('genericError', { message: `${error.message} ${t('apiKeyErrorHint')}` }));
+        } finally {
+            setIsGeneratingScript(false);
+        }
+    };
+
+    const handleGeneratePrompts = async () => {
+        if (!characterDescription.trim() || !characterImageB64 || scenes.some(s => !s.description.trim())) {
+            alert(t('formValidationError'));
+            return;
+        }
+        
+        setIsGeneratingPrompts(true);
+
+        try {
+            const ai = new GoogleGenAI({ apiKey: getApiKey() });
+            
+            const sceneDescriptions = scenes.map(s => `Scene ID ${s.id}: ${s.description}`).join('\n');
+            const promptGenerationPrompt = `
+                You are a creative assistant for video production. Your task is to generate video prompts for the Veo 3.1 model based on a character description, a reference image, and a series of scene descriptions. The most important goal is to maintain character consistency across all scenes. The final combined video from all scenes should be approximately ${videoDuration} minute(s) long, so pace the prompts for each scene accordingly.
+
+                Character Description: "${characterDescription}"
+                (A reference image of the character will be provided to the video model.)
+
+                Scene Descriptions:
+                ${sceneDescriptions}
+
+                Generate a detailed, high-quality video prompt for each scene. The prompt should incorporate the character description seamlessly. The output must be a valid JSON array of objects, where each object has "id" (the original scene ID as a number) and "prompt" (the generated string prompt).
+            `;
+            
+            const result = await ai.models.generateContent({
+                model: 'gemini-2.5-pro',
+                contents: promptGenerationPrompt,
+                config: {
+                    responseMimeType: 'application/json',
+                    responseSchema: {
+                        type: Type.ARRAY,
+                        items: {
+                            type: Type.OBJECT,
+                            properties: {
+                                id: { type: Type.NUMBER },
+                                prompt: { type: Type.STRING },
+                            },
+                            required: ['id', 'prompt']
+                        },
+                    },
+                }
+            });
+
+            const generatedPrompts: {id: number, prompt: string}[] = JSON.parse(result.text.trim());
+            
+            const updatedScenesWithPrompts = scenes.map(scene => {
+                const foundPrompt = generatedPrompts.find(p => p.id === scene.id);
+                return foundPrompt ? { ...scene, generatedPrompt: foundPrompt.prompt } : scene;
+            });
+            setScenes(updatedScenesWithPrompts);
+
+        } catch (error: any) {
+            console.error('An error occurred during prompt generation:', error);
+            if (error.message?.includes('Requested entity was not found.')) {
+                setHasApiKey(false);
+            }
+            alert(t('genericError', { message: `${error.message} ${t('apiKeyErrorHint')}` }));
+        } finally {
+            setIsGeneratingPrompts(false);
+        }
+    };
+    
+    const handleGenerateVideo = async (sceneId: number) => {
+        const sceneToProcess = scenes.find(s => s.id === sceneId);
+        if (!sceneToProcess || !characterImageB64 || !characterImage) return;
+        
+        setScenes(prev => prev.map(s => s.id === sceneId ? { ...s, isLoading: true, error: null } : s));
+
+        try {
+            const videoAi = new GoogleGenAI({ apiKey: getApiKey() });
+            let operation = await videoAi.models.generateVideos({
+                model: veoModel,
+                prompt: sceneToProcess.generatedPrompt,
+                image: {
+                    imageBytes: characterImageB64,
+                    mimeType: characterImage.type,
+                },
+                config: {
+                    numberOfVideos: 1,
+                    resolution: resolution,
+                    aspectRatio: aspectRatio,
+                }
+            });
+
+            while (!operation.done) {
+                await new Promise(resolve => setTimeout(resolve, 10000));
+                operation = await videoAi.operations.getVideosOperation({ operation: operation });
+            }
+
+            const generatedVideo = operation.response?.generatedVideos?.[0];
+            const downloadLink = generatedVideo?.video?.uri;
+            const thumbnailLink = generatedVideo?.thumbnail?.uri;
+            
+            let finalThumbnailUrl = null;
+            if (thumbnailLink) {
+                try {
+                     const thumbnailResponse = await fetch(`${thumbnailLink}&key=${getApiKey()}`);
+                     if (!thumbnailResponse.ok) {
+                         console.warn(`Could not fetch thumbnail for scene ${sceneId}. Server responded with ${thumbnailResponse.status}: ${thumbnailResponse.statusText}`);
+                     } else {
+                        const thumbnailBlob = await thumbnailResponse.blob();
+                        finalThumbnailUrl = URL.createObjectURL(thumbnailBlob);
+                     }
+                } catch (thumbError) {
+                    console.warn(`Could not fetch thumbnail for scene ${sceneId}:`, thumbError)
+                }
+            }
+
+            if (downloadLink) {
+                const videoResponse = await fetch(`${downloadLink}&key=${getApiKey()}`);
+                 if (!videoResponse.ok) {
+                    throw new Error(`Failed to download video. Server responded with ${videoResponse.status}: ${videoResponse.statusText}. Please check your network connection and API key permissions.`);
+                }
+                const videoBlob = await videoResponse.blob();
+                const videoUrl = URL.createObjectURL(videoBlob);
+                setScenes(prev => prev.map(s => s.id === sceneId ? { ...s, videoUrl, thumbnailUrl: finalThumbnailUrl, isLoading: false } : s));
+            } else {
+                 throw new Error('Video generation finished but no download link was provided.');
+            }
+        } catch (err: any) {
+            console.error(`Error generating video for scene ${sceneId}:`, err);
+            if (err.message?.includes('Requested entity was not found.')) {
+                setHasApiKey(false);
+            }
+            const errorMessage = `${err.message || 'An unknown error occurred.'} ${t('apiKeyErrorHint')}`;
+            setScenes(prev => prev.map(s => s.id === sceneId ? { ...s, isLoading: false, error: errorMessage } : s));
+        }
+    };
+
+    const handleGenerateAllVideos = async () => {
+        if (!characterImageB64 || !characterImage) {
+            alert(t('formValidationError'));
+            return;
+        }
+
+        for (const scene of scenes) {
+            if (scene.generatedPrompt.trim() && !scene.videoUrl && !scene.isLoading && !scene.error) {
+                await handleGenerateVideo(scene.id);
+            }
+        }
+    };
+
+    const handleDragStart = (e: React.DragEvent<HTMLDivElement>, scene: Scene) => {
+        e.dataTransfer.effectAllowed = 'move';
+        setDraggedSceneId(scene.id);
+    };
+
+    const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+        e.preventDefault();
+    };
+
+    const handleDrop = (e: React.DragEvent<HTMLDivElement>, targetId: number) => {
+        e.preventDefault();
+        if (draggedSceneId === null || draggedSceneId === targetId) {
+            setDraggedSceneId(null);
+            return;
+        }
+
+        const newScenes = [...scenes];
+        const draggedIndex = scenes.findIndex(s => s.id === draggedSceneId);
+        const targetIndex = scenes.findIndex(s => s.id === targetId);
+
+        if (draggedIndex === -1 || targetIndex === -1) return;
+
+        const [draggedItem] = newScenes.splice(draggedIndex, 1);
+        newScenes.splice(targetIndex, 0, draggedItem);
+
+        setScenes(newScenes);
+        setDraggedSceneId(null);
+    };
+
+    const handleDragEnd = () => {
+        setDraggedSceneId(null);
+    };
+    
+    const isAnyVideoLoading = scenes.some(s => s.isLoading);
+    const isFormDisabled = isGeneratingPrompts || isAnyVideoLoading || isGeneratingImage;
+
+    if (!hasApiKey) {
+        return (
+            <div className="min-h-screen bg-gray-900 flex flex-col items-center justify-center text-white p-4">
+                <div className="bg-gray-800 p-8 rounded-lg shadow-2xl max-w-lg text-center">
+                    <h1 className="text-3xl font-bold mb-4 text-cyan-400">{t('welcome')}</h1>
+                    <p className="mb-6 text-gray-300">{t('apiKeyPrompt')}</p>
+                    <p className="mb-6 text-sm text-gray-400">{t('billingInfo')} <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noopener noreferrer" className="text-cyan-400 hover:underline">ai.google.dev/gemini-api/docs/billing</a>.</p>
+                    <button
+                        onClick={handleSelectApiKey}
+                        className="bg-cyan-500 hover:bg-cyan-600 text-white font-bold py-3 px-6 rounded-lg transition-all duration-300 transform hover:scale-105"
+                    >
+                        {t('selectApiKey')}
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+    return (
+        <div className="min-h-screen bg-gray-900 text-gray-200 font-sans p-4 sm:p-6 lg:p-8">
+            <div className="max-w-7xl mx-auto">
+                <header className="mb-8">
+                    <div className="flex justify-between items-center">
+                        <div className="text-left">
+                            <h1 className="text-4xl sm:text-5xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-cyan-400">
+                                {t('title')}
+                            </h1>
+                            <p className="mt-2 text-lg text-gray-400">{t('subtitle')}</p>
+                        </div>
+                         <div className="flex items-center space-x-4">
+                            <div className="flex space-x-2">
+                                 <button onClick={() => setLanguage('vi')} className={`px-3 py-1 text-sm rounded-md transition-colors ${language === 'vi' ? 'bg-cyan-500 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>Tiếng Việt</button>
+                                 <button onClick={() => setLanguage('en')} className={`px-3 py-1 text-sm rounded-md transition-colors ${language === 'en' ? 'bg-cyan-500 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}>English</button>
+                            </div>
+                        </div>
+                    </div>
+                </header>
+
+                <main className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    <div className="bg-gray-800/50 p-6 rounded-2xl border border-gray-700 flex flex-col gap-6">
+                        <div>
+                            <h2 className="text-2xl font-bold mb-3 text-cyan-300">{t('defineCharacterTitle')}</h2>
+                            <textarea
+                                value={characterDescription}
+                                onChange={(e) => setCharacterDescription(e.target.value)}
+                                placeholder={t('characterDescriptionPlaceholder')}
+                                className="w-full p-3 bg-gray-900 border border-gray-600 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 transition-colors"
+                                rows={4}
+                                disabled={isFormDisabled}
+                            />
+                        </div>
+                         <div>
+                            <h3 className="text-xl font-semibold mb-2">{t('videoDurationTitle')}</h3>
+                             <input
+                                 type="number"
+                                 value={videoDuration}
+                                 onChange={(e) => setVideoDuration(Math.max(1, Number(e.target.value)))}
+                                 min="1"
+                                 className="w-full p-3 bg-gray-900 border border-gray-600 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 transition-colors"
+                                 disabled={isFormDisabled}
+                             />
+                         </div>
+                        
+                        <div>
+                           <h3 className="text-xl font-semibold mb-2">{t('aspectRatioTitle')}</h3>
+                           <div className="flex space-x-2">
+                               <button
+                                   onClick={() => setAspectRatio('16:9')}
+                                   disabled={isFormDisabled}
+                                   className={`flex-1 text-center py-2 px-4 rounded-lg transition-colors ${aspectRatio === '16:9' ? 'bg-cyan-500 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
+                               >
+                                   16:9 ({t('landscape')})
+                               </button>
+                               <button
+                                   onClick={() => setAspectRatio('9:16')}
+                                   disabled={isFormDisabled}
+                                   className={`flex-1 text-center py-2 px-4 rounded-lg transition-colors ${aspectRatio === '9:16' ? 'bg-cyan-500 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
+                               >
+                                   9:16 ({t('portrait')})
+                               </button>
+                           </div>
+                        </div>
+
+                        <div>
+                           <h3 className="text-xl font-semibold mb-2">{t('resolutionTitle')}</h3>
+                           <div className="flex space-x-2">
+                               <button
+                                   onClick={() => setResolution('720p')}
+                                   disabled={isFormDisabled}
+                                   className={`flex-1 text-center py-2 px-4 rounded-lg transition-colors ${resolution === '720p' ? 'bg-cyan-500 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
+                               >
+                                   720p ({t('standardDef')})
+                               </button>
+                               <button
+                                   onClick={() => setResolution('1080p')}
+                                   disabled={isFormDisabled}
+                                   className={`flex-1 text-center py-2 px-4 rounded-lg transition-colors ${resolution === '1080p' ? 'bg-cyan-500 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
+                               >
+                                   1080p ({t('highDef')})
+                               </button>
+                           </div>
+                        </div>
+
+                        <div>
+                           <h3 className="text-xl font-semibold mb-2">{t('veoModelTitle')}</h3>
+                           <div className="flex space-x-2">
+                               <button
+                                   onClick={() => setVeoModel('veo-3.1-fast-generate-preview')}
+                                   disabled={isFormDisabled}
+                                   className={`flex-1 text-center py-2 px-4 rounded-lg transition-colors ${veoModel === 'veo-3.1-fast-generate-preview' ? 'bg-cyan-500 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
+                               >
+                                   {t('fastMode')}
+                               </button>
+                               <button
+                                   onClick={() => setVeoModel('veo-3.1-generate-preview')}
+                                   disabled={isFormDisabled}
+                                   className={`flex-1 text-center py-2 px-4 rounded-lg transition-colors ${veoModel === 'veo-3.1-generate-preview' ? 'bg-cyan-500 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
+                               >
+                                   {t('highQualityMode')}
+                               </button>
+                           </div>
+                        </div>
+
+                        <div>
+                           <h3 className="text-xl font-semibold mb-3">{t('characterReferenceImageTitle')}</h3>
+                           <div className="grid grid-cols-2 gap-3 mb-3">
+                               <label htmlFor="file-upload" className={`relative cursor-pointer flex-1 bg-gray-700 hover:bg-gray-600 rounded-lg font-medium text-white text-center py-3 px-4 transition-colors flex items-center justify-center ${isFormDisabled ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                                   <span>{t('uploadImage')}</span>
+                                   <input id="file-upload" name="file-upload" type="file" className="sr-only" onChange={handleImageChange} accept="image/png, image/jpeg" disabled={isFormDisabled}/>
+                               </label>
+                               <button
+                                  onClick={handleGenerateCharacterImage}
+                                  disabled={isFormDisabled || !characterDescription.trim()}
+                                  className="flex-1 flex items-center justify-center gap-2 bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-3 px-4 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                               >
+                                  {isGeneratingImage ? <LoaderIcon className="w-5 h-5"/> : <WandSparklesIcon className="w-5 h-5"/>}
+                                  {isGeneratingImage ? t('generatingImageButton') : t('generateImageButton')}
+                               </button>
+                           </div>
+                           <div className="mt-1 flex justify-center items-center px-6 pt-5 pb-6 border-2 border-gray-600 border-dashed rounded-md min-h-[170px]">
+                               <div className="space-y-1 text-center">
+                                   {isGeneratingImage ? (
+                                       <>
+                                           <LoaderIcon className="w-10 h-10 mx-auto text-cyan-400"/>
+                                           <p className="mt-2 text-sm text-gray-300">{t('generatingImageButton')}</p>
+                                       </>
+                                   ) : characterImageB64 ? (
+                                       <img src={`data:image/png;base64,${characterImageB64}`} alt="Character Preview" className="mx-auto h-32 w-32 object-cover rounded-md"/>
+                                   ) : (
+                                      <>
+                                          <svg className="mx-auto h-12 w-12 text-gray-500" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
+                                              <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                                          </svg>
+                                          <p className="text-sm text-gray-500">{t('imagePreviewPlaceholder')}</p>
+                                      </>
+                                   )}
+                                   <p className="text-xs text-gray-600">{t('imageFormatInfo')}</p>
+                               </div>
+                           </div>
+                        </div>
+                        
+                        <div>
+                           <h2 className="text-2xl font-bold mb-3 text-cyan-300">{t('generateScriptTitle')}</h2>
+                           <textarea
+                                value={storyIdea}
+                                onChange={(e) => setStoryIdea(e.target.value)}
+                                placeholder={t('storyIdeaPlaceholder')}
+                                className="w-full p-3 bg-gray-900 border border-gray-600 rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 transition-colors"
+                                rows={3}
+                                disabled={isFormDisabled || isGeneratingScript}
+                            />
+                            <button
+                                onClick={handleGenerateScriptFromIdea}
+                                disabled={isFormDisabled || isGeneratingScript || !storyIdea.trim()}
+                                className="mt-3 w-full flex items-center justify-center gap-2 bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-2 px-4 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                {isGeneratingScript ? <LoaderIcon className="w-5 h-5"/> : <WandSparklesIcon className="w-5 h-5"/>}
+                                {isGeneratingScript ? t('generatingScriptButton') : t('generateScriptButton')}
+                            </button>
+                        </div>
+
+
+                        <div>
+                            <h2 className="text-2xl font-bold mb-3 text-cyan-300">{t('editScenesTitle')}</h2>
+                            <div className="space-y-4">
+                                {scenes.map((scene, index) => (
+                                    <div 
+                                        key={scene.id} 
+                                        draggable={!isFormDisabled}
+                                        onDragStart={(e) => handleDragStart(e, scene)}
+                                        onDragOver={handleDragOver}
+                                        onDrop={(e) => handleDrop(e, scene.id)}
+                                        onDragEnd={handleDragEnd}
+                                        className={`bg-gray-900/70 p-4 rounded-lg flex items-start gap-3 transition-all duration-200 ${draggedSceneId === scene.id ? 'opacity-30 scale-95' : 'opacity-100'}`}
+                                    >
+                                        <div className="flex flex-col items-center pt-2">
+                                            <GripVerticalIcon className="w-5 h-5 text-gray-500 cursor-grab mb-2" />
+                                            <span className="font-bold text-lg text-gray-400">{index + 1}.</span>
+                                        </div>
+                                        <textarea
+                                            value={scene.description}
+                                            onChange={(e) => handleSceneDescriptionChange(scene.id, e.target.value)}
+                                            placeholder={t('scenePlaceholder', { index: index + 1 })}
+                                            className="w-full p-2 bg-gray-800 border border-gray-600 rounded-md flex-grow focus:ring-1 focus:ring-cyan-500"
+                                            rows={2}
+                                            disabled={isFormDisabled}
+                                        />
+                                        <button 
+                                            onClick={() => handleRemoveScene(scene.id)} 
+                                            className="p-2 text-gray-500 hover:text-red-500 disabled:opacity-50 mt-1"
+                                            disabled={scenes.length <= 1 || isFormDisabled}
+                                        >
+                                            <TrashIcon className="w-5 h-5"/>
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                            <button onClick={handleAddScene} disabled={isFormDisabled} className="mt-4 flex items-center gap-2 text-cyan-400 hover:text-cyan-300 font-semibold transition-colors disabled:opacity-50">
+                                <PlusIcon className="w-5 h-5"/>
+                                {t('addScene')}
+                            </button>
+                        </div>
+                        
+                        <div className="mt-auto pt-6">
+                            <button 
+                                onClick={handleGeneratePrompts} 
+                                disabled={isFormDisabled || !characterDescription.trim() || !characterImageB64 || scenes.some(s => !s.description.trim())}
+                                className="w-full flex items-center justify-center gap-3 bg-gradient-to-r from-purple-500 to-cyan-500 text-white font-bold py-4 px-6 rounded-lg text-lg hover:from-purple-600 hover:to-cyan-600 transition-all duration-300 transform hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:scale-100"
+                            >
+                                {isGeneratingPrompts ? <LoaderIcon className="w-6 h-6"/> : <WandSparklesIcon className="w-6 h-6"/>}
+                                {isGeneratingPrompts ? t('generatingPromptsButton') : t('generatePromptsButton')}
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div className="bg-gray-800/50 p-6 rounded-2xl border border-gray-700">
+                        <div className="flex justify-between items-center mb-6">
+                            <h2 className="text-2xl font-bold text-purple-300">{t('storyboardTitle')}</h2>
+                            <button
+                                onClick={handleGenerateAllVideos}
+                                disabled={isAnyVideoLoading || !characterImageB64 || scenes.length === 0 || scenes.some(s => !s.generatedPrompt.trim())}
+                                className="flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                <PlayIcon className="w-5 h-5" />
+                                {t('generateAllVideosButton')}
+                            </button>
+                        </div>
+                        <div className="space-y-6 overflow-y-auto" style={{maxHeight: 'calc(100vh - 250px)'}}>
+                            {scenes.map((scene, index) => (
+                                <div 
+                                    key={scene.id}
+                                    draggable={!isAnyVideoLoading}
+                                    onDragStart={(e) => handleDragStart(e, scene)}
+                                    onDragOver={handleDragOver}
+                                    onDrop={(e) => handleDrop(e, scene.id)}
+                                    onDragEnd={handleDragEnd}
+                                    className={`bg-gray-900/70 p-4 rounded-lg transition-all duration-200 ${draggedSceneId === scene.id ? 'opacity-30 scale-95' : 'opacity-100'}`}
+                                >
+                                    <div className="flex items-center gap-3 mb-2">
+                                        <GripVerticalIcon className="w-5 h-5 text-gray-500 cursor-grab flex-shrink-0" />
+                                        <h3 className="font-bold text-lg">{t('sceneTitle', { index: index + 1 })}</h3>
+                                    </div>
+                                    <div className="mb-4">
+                                        <label className="text-sm font-semibold text-gray-400 mb-1 block">{t('generatedPromptTitle')}</label>
+                                        <textarea 
+                                            value={scene.generatedPrompt}
+                                            onChange={(e) => handleGeneratedPromptChange(scene.id, e.target.value)}
+                                            placeholder={t('videoPromptPlaceholder')}
+                                            className="w-full text-sm bg-gray-800 p-3 rounded-md border border-gray-700 focus:ring-1 focus:ring-purple-500"
+                                            rows={3}
+                                            disabled={isAnyVideoLoading}
+                                        />
+                                    </div>
+                                    <div className="aspect-video bg-gray-950 rounded-lg flex items-center justify-center relative">
+                                        {scene.thumbnailUrl && !scene.videoUrl ? (
+                                            <img src={scene.thumbnailUrl} alt="Video thumbnail preview" className="w-full h-full object-cover rounded-lg" />
+                                        ) : (
+                                            !scene.isLoading && !scene.error && !scene.videoUrl && <p className="text-gray-600 text-sm">{t('videoPlaceholder')}</p>
+                                        )}
+                                        {scene.isLoading && (
+                                            <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center text-center">
+                                                <LoaderIcon className="w-10 h-10 mx-auto text-cyan-400"/>
+                                                <p className="mt-2 text-sm text-white">{t('generatingVideo')}</p>
+                                                <p className="text-xs text-gray-300">{t('generatingVideoSubtext')}</p>
+                                            </div>
+                                        )}
+                                        {scene.error && (
+                                            <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center text-center text-red-400 p-4">
+                                                <p className="font-bold">{t('videoFailed')}</p>
+                                                <p className="text-xs mt-1">{scene.error}</p>
+                                            </div>
+                                        )}
+                                        {scene.videoUrl && (
+                                            <video src={scene.videoUrl} controls className="absolute inset-0 w-full h-full rounded-lg" />
+                                        )}
+                                    </div>
+                                    {!scene.videoUrl && !scene.isLoading && (
+                                        <div className="mt-3">
+                                            <button 
+                                                onClick={() => handleGenerateVideo(scene.id)}
+                                                disabled={isAnyVideoLoading || !scene.generatedPrompt.trim()}
+                                                className="w-full flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-4 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                            >
+                                                <PlayIcon className="w-5 h-5" />
+                                                {t('generateVideoButton')}
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </main>
+            </div>
+        </div>
+    );
+};
+
+export default App;
+
+
+      
+function SettingsModal({ open, onClose }) {
+  const [key, setKey] = React.useState(localStorage.getItem('GEMINI_API_KEY') || '');
+  const [visible, setVisible] = React.useState(false);
+  const save = () => {
+    if (!key || !key.trim()) { alert('API key không được để trống'); return; }
+    localStorage.setItem('GEMINI_API_KEY', key.trim());
+    alert('Đã lưu API key');
+    onClose();
+  };
+  const clearKey = () => {
+    localStorage.removeItem('GEMINI_API_KEY');
+    alert('Đã xoá API key khỏi LocalStorage');
+    onClose();
+  };
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+      <div className="w-full max-w-lg rounded-2xl bg-gray-800 shadow-2xl border border-gray-700 p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-semibold text-white">Settings</h2>
+          <button className="text-gray-300 hover:text-white" onClick={onClose} aria-label="Close">✕</button>
+        </div>
+        <label className="block text-sm mb-2 text-gray-300">GEMINI API Key</label>
+        <div className="flex gap-2 mb-4">
+          <input type={visible ? 'text' : 'password'} className="flex-1 rounded-lg bg-gray-900 border border-gray-700 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-cyan-500" placeholder="AIza..." value={key} onChange={e => setKey(e.target.value)} />
+          <button className="px-3 py-2 rounded-lg bg-gray-700 hover:bg-gray-600" onClick={() => setVisible(v => !v)}>{visible ? 'Hide' : 'Show'}</button>
+        </div>
+        <div className="flex items-center justify-between text-xs text-gray-400 mb-4">
+          <span>Lưu ý: API key lưu ở LocalStorage phía client.</span>
+          <a className="underline hover:text-gray-200" href="https://ai.google.dev/gemini-api/docs" target="_blank" rel="noreferrer">Tạo key</a>
+        </div>
+        <div className="flex gap-2 justify-end">
+          <button className="px-4 py-2 rounded-lg bg-gray-700 hover:bg-gray-600" onClick={clearKey}>Xoá Key</button>
+          <button className="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500" onClick={save}>Lưu</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+function Shell() {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <div className="h-full relative">
+      <button className="fixed z-40 top-4 right-4 p-3 rounded-full bg-gray-800 border border-gray-700 shadow-lg hover:bg-gray-700" aria-label="Settings" onClick={() => setOpen(true)} title="Settings">⚙️</button>
+      <SettingsModal open={open} onClose={() => setOpen(false)} />
+      <App />
+    </div>
+  );
+}
+
+      const root = ReactDOM.createRoot(document.getElementById('root'));
+      root.render(React.createElement(React.StrictMode, null, React.createElement(Shell)));
+    </script>
+  </body>
+</html>
